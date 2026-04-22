@@ -37,7 +37,7 @@ public class TodoController {
 
     @PutMapping("/{id}")
     public TodoResponseDTO updateTodo(@PathVariable Long id,
-                           @RequestBody UpdateTodoRequestDTO request) {
+                           @RequestBody @Valid UpdateTodoRequestDTO request) {
 
         return todoService.updateTodo(
                 id,
@@ -54,7 +54,7 @@ public class TodoController {
     @PutMapping("/{id}/reorder")
     public List<TodoResponseDTO> reorder(
             @PathVariable Long id,
-            @RequestBody ReorderRequestDTO request
+            @RequestBody @Valid ReorderRequestDTO request
     ) {
         return todoService.reorderTodo(id, request.getNewPosition());
     }
