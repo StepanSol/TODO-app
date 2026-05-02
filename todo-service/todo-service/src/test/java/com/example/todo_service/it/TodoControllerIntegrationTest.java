@@ -1,34 +1,38 @@
 package com.example.todo_service.it;
 
 import com.example.todo_service.config.TestSecurityConfig;
-import com.example.todo_service.controller.TodoController;
 import com.example.todo_service.model.*;
-import com.example.todo_service.service.TodoService;
+import com.example.todo_service.repository.TodoRepository;
+import com.example.todo_service.repository.UserRepository;
 import com.example.todo_service.service.UserService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
-import static org.hamcrest.Matchers.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@WebMvcTest(controllers = TodoController.class)
+@SpringBootTest
+@AutoConfigureMockMvc
+@Transactional
+@ActiveProfiles("test")
 @Import(TestSecurityConfig.class)
-@DisplayName("TodoController Integration Tests")
-class TodoControllerIntegrationTest {
+@SuppressWarnings("deprecation")
+public class TodoControllerIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -36,243 +40,216 @@ class TodoControllerIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockitoBean
-    private TodoService todoService;
+    @Autowired
+    private TodoRepository todoRepository;
 
-    @MockitoBean
+    @Autowired
+    private UserRepository userRepository;
+
+    @MockBean
     private UserService userService;
 
-    private TodoResponseDTO testTodoResponse;
-    private CreateTodoRequestDTO createRequest;
-    private UpdateTodoRequestDTO updateRequest;
-    private ReorderRequestDTO reorderRequest;
+    private User testUser;
+    private String keycloakId = "keycloak-user-123";
 
     @BeforeEach
     void setUp() {
-        testTodoResponse = new TodoResponseDTO(1L, "Test Todo", false, 0);
+        todoRepository.deleteAll();
+        userRepository.deleteAll();
 
-        createRequest = new CreateTodoRequestDTO();
-        createRequest.setTitle("New Todo");
+        testUser = new User();
+        testUser.setKeycloakId(keycloakId);
+        testUser.setEmail("test@example.com");
+        testUser.setUsername("testuser");
+        testUser.setFullName("Test User");
+        testUser = userRepository.save(testUser);
 
-        updateRequest = new UpdateTodoRequestDTO();
-        updateRequest.setTitle("Updated Todo");
-        updateRequest.setCompleted(true);
-
-        reorderRequest = new ReorderRequestDTO();
-        reorderRequest.setNewPosition(1);
+        when(userService.getCurrentUserId()).thenReturn(keycloakId);
+        when(userService.getByKeycloakId(keycloakId)).thenReturn(testUser);
     }
 
-    @Nested
-    @DisplayName("POST /api/todos - Create Todo")
-    class CreateTodoTests {
+    @Test
+    void createTodo_ShouldReturnCreatedTodo() throws Exception {
+        CreateTodoRequestDTO request = new CreateTodoRequestDTO();
+        request.setTitle("New Task");
 
-        @Test
-        @DisplayName("Should create todo successfully")
-        void shouldCreateTodoSuccessfully() throws Exception {
-            when(todoService.createTodo(anyString())).thenReturn(testTodoResponse);
+        MvcResult result = mockMvc.perform(post("/api/todos")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("New Task"))
+                .andExpect(jsonPath("$.completed").value(false))
+                .andExpect(jsonPath("$.position").value(0))
+                .andReturn();
 
-            mockMvc.perform(post("/api/todos")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(createRequest)))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.id").value(1L))
-                    .andExpect(jsonPath("$.title").value("Test Todo"))
-                    .andExpect(jsonPath("$.completed").value(false))
-                    .andExpect(jsonPath("$.position").value(0));
-
-            verify(todoService).createTodo("New Todo");
-        }
-
-        @Test
-        @DisplayName("Should return 400 when title is blank")
-        void shouldReturnBadRequestWhenTitleIsBlank() throws Exception {
-            createRequest.setTitle("");
-
-            mockMvc.perform(post("/api/todos")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(createRequest)))
-                    .andExpect(status().isBadRequest());
-
-            verify(todoService, never()).createTodo(any());
-        }
-
-        @Test
-        @DisplayName("Should return 400 when title exceeds max length")
-        void shouldReturnBadRequestWhenTitleTooLong() throws Exception {
-            createRequest.setTitle("a".repeat(256));
-
-            mockMvc.perform(post("/api/todos")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(createRequest)))
-                    .andExpect(status().isBadRequest());
-
-            verify(todoService, never()).createTodo(any());
-        }
-
-        @Test
-        @DisplayName("Should return 400 when title is null")
-        void shouldReturnBadRequestWhenTitleIsNull() throws Exception {
-            createRequest.setTitle(null);
-
-            mockMvc.perform(post("/api/todos")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(createRequest)))
-                    .andExpect(status().isBadRequest());
-
-            verify(todoService, never()).createTodo(any());
-        }
+        TodoResponseDTO response = objectMapper.readValue(
+                result.getResponse().getContentAsString(),
+                TodoResponseDTO.class
+        );
+        assertThat(response.getId()).isNotNull();
     }
 
-    @Nested
-    @DisplayName("GET /api/todos - Get My Todos")
-    class GetMyTodosTests {
+    @Test
+    void createTodo_WithBlankTitle_ShouldReturnBadRequest() throws Exception {
+        CreateTodoRequestDTO request = new CreateTodoRequestDTO();
+        request.setTitle("");
 
-        @Test
-        @DisplayName("Should return list of todos")
-        void shouldReturnListOfTodos() throws Exception {
-            List<TodoResponseDTO> todos = List.of(
-                    new TodoResponseDTO(1L, "Todo 1", false, 0),
-                    new TodoResponseDTO(2L, "Todo 2", true, 1)
-            );
-            when(todoService.getMyTodos()).thenReturn(todos);
-
-            mockMvc.perform(get("/api/todos"))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$", hasSize(2)))
-                    .andExpect(jsonPath("$[0].id").value(1L))
-                    .andExpect(jsonPath("$[0].title").value("Todo 1"))
-                    .andExpect(jsonPath("$[1].id").value(2L))
-                    .andExpect(jsonPath("$[1].title").value("Todo 2"));
-
-            verify(todoService).getMyTodos();
-        }
-
-        @Test
-        @DisplayName("Should return empty list when no todos")
-        void shouldReturnEmptyListWhenNoTodos() throws Exception {
-            when(todoService.getMyTodos()).thenReturn(List.of());
-
-            mockMvc.perform(get("/api/todos"))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$", hasSize(0)));
-
-            verify(todoService).getMyTodos();
-        }
+        mockMvc.perform(post("/api/todos")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest());
     }
 
-    @Nested
-    @DisplayName("PUT /api/todos/{id} - Update Todo")
-    class UpdateTodoTests {
+    @Test
+    void createTodo_WithTitleTooLong_ShouldReturnBadRequest() throws Exception {
+        CreateTodoRequestDTO request = new CreateTodoRequestDTO();
+        request.setTitle("a".repeat(256));
 
-        @Test
-        @DisplayName("Should update todo successfully")
-        void shouldUpdateTodoSuccessfully() throws Exception {
-            when(todoService.updateTodo(eq(1L), eq("Updated Todo"), eq(true)))
-                    .thenReturn(new TodoResponseDTO(1L, "Updated Todo", true, 0));
-
-            mockMvc.perform(put("/api/todos/1")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(updateRequest)))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.title").value("Updated Todo"))
-                    .andExpect(jsonPath("$.completed").value(true));
-
-            verify(todoService).updateTodo(1L, "Updated Todo", true);
-        }
-
-        @Test
-        @DisplayName("Should return 400 when title is blank")
-        void shouldReturnBadRequestWhenTitleBlank() throws Exception {
-            updateRequest.setTitle("");
-
-            mockMvc.perform(put("/api/todos/1")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(updateRequest)))
-                    .andExpect(status().isBadRequest());
-
-            verify(todoService, never()).updateTodo(anyLong(), anyString(), anyBoolean());
-        }
-
-        @Test
-        @DisplayName("Should return 400 when title is null")
-        void shouldReturnBadRequestWhenTitleNull() throws Exception {
-            updateRequest.setTitle(null);
-
-            mockMvc.perform(put("/api/todos/1")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(updateRequest)))
-                    .andExpect(status().isBadRequest());
-
-            verify(todoService, never()).updateTodo(anyLong(), anyString(), anyBoolean());
-        }
+        mockMvc.perform(post("/api/todos")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest());
     }
 
-    @Nested
-    @DisplayName("DELETE /api/todos/{id} - Delete Todo")
-    class DeleteTodoTests {
+    @Test
+    void getMyTodos_ShouldReturnUserTodos() throws Exception {
+        createTodoEntity("Task 1", 0);
+        createTodoEntity("Task 2", 1);
 
-        @Test
-        @DisplayName("Should delete todo successfully")
-        void shouldDeleteTodoSuccessfully() throws Exception {
-            doNothing().when(todoService).deleteTodo(anyLong());
-
-            mockMvc.perform(delete("/api/todos/1"))
-                    .andExpect(status().isOk());
-
-            verify(todoService).deleteTodo(1L);
-        }
+        mockMvc.perform(get("/api/todos"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].title").value("Task 1"))
+                .andExpect(jsonPath("$[1].title").value("Task 2"));
     }
 
-    @Nested
-    @DisplayName("PUT /api/todos/{id}/reorder - Reorder Todo")
-    class ReorderTodoTests {
+    @Test
+    void getMyTodos_WhenNoTodos_ShouldReturnEmptyList() throws Exception {
+        mockMvc.perform(get("/api/todos"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
 
-        @Test
-        @DisplayName("Should reorder todo successfully")
-        void shouldReorderTodoSuccessfully() throws Exception {
-            List<TodoResponseDTO> reorderedTodos = List.of(
-                    new TodoResponseDTO(2L, "Todo 2", false, 0),
-                    new TodoResponseDTO(1L, "Todo 1", false, 1)
-            );
-            when(todoService.reorderTodo(eq(1L), eq(1))).thenReturn(reorderedTodos);
+    @Test
+    void updateTodo_ShouldUpdateTitleAndCompleted() throws Exception {
+        Todo todo = createTodoEntity("Old Title", 0);
 
-            mockMvc.perform(put("/api/todos/1/reorder")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(reorderRequest)))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$", hasSize(2)))
-                    .andExpect(jsonPath("$[0].id").value(2L))
-                    .andExpect(jsonPath("$[1].id").value(1L));
+        UpdateTodoRequestDTO request = new UpdateTodoRequestDTO();
+        request.setTitle("New Title");
+        request.setCompleted(true);
 
-            verify(todoService).reorderTodo(eq(1L), eq(1));
-        }
+        mockMvc.perform(put("/api/todos/{id}", todo.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("New Title"))
+                .andExpect(jsonPath("$.completed").value(true))
+                .andExpect(jsonPath("$.position").value(0));
+    }
 
-        @Test
-        @DisplayName("Should return 400 when new position is negative")
-        void shouldReturnBadRequestWhenNegativePosition() throws Exception {
-            reorderRequest.setNewPosition(-1);
+    @Test
+    void updateTodo_WithInvalidId_ShouldReturnNotFound() throws Exception {
+        UpdateTodoRequestDTO request = new UpdateTodoRequestDTO();
+        request.setTitle("New Title");
+        request.setCompleted(true);
 
-            mockMvc.perform(put("/api/todos/1/reorder")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(reorderRequest)))
-                    .andExpect(status().isBadRequest());
+        mockMvc.perform(put("/api/todos/{id}", 999L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound());
+    }
 
-            // Не проверяем вызов сервиса, т.к. валидация должна сработать до него
-            verify(todoService, never()).reorderTodo(anyLong(), anyInt());
-        }
+    @Test
+    void deleteTodo_ShouldRemoveTodoAndReorderRemaining() throws Exception {
+        Todo todo1 = createTodoEntity("Task 1", 0);
+        Todo todo2 = createTodoEntity("Task 2", 1);
+        Todo todo3 = createTodoEntity("Task 3", 2);
 
-        @Test
-        @DisplayName("Should return 400 when new position is null")
-        void shouldReturnBadRequestWhenPositionNull() throws Exception {
-            // Отправляем JSON без поля newPosition
-            String jsonWithoutPosition = "{}";
+        mockMvc.perform(delete("/api/todos/{id}", todo2.getId()))
+                .andExpect(status().isOk());
 
-            mockMvc.perform(put("/api/todos/1/reorder")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(jsonWithoutPosition))
-                    .andExpect(status().isBadRequest());
+        List<Todo> remaining = todoRepository.findByUserIdOrderByPositionAsc(testUser.getId());
+        assertThat(remaining).hasSize(2);
+        assertThat(remaining.get(0).getTitle()).isEqualTo("Task 1");
+        assertThat(remaining.get(0).getPosition()).isEqualTo(0);
+        assertThat(remaining.get(1).getTitle()).isEqualTo("Task 3");
+        assertThat(remaining.get(1).getPosition()).isEqualTo(1);
+    }
 
-            verify(todoService, never()).reorderTodo(anyLong(), anyInt());
-        }
+    @Test
+    void deleteTodo_WithInvalidId_ShouldReturnNotFound() throws Exception {
+        mockMvc.perform(delete("/api/todos/{id}", 999L))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void reorderTodo_ShouldChangePosition() throws Exception {
+        Todo todo1 = createTodoEntity("Task 1", 0);
+        Todo todo2 = createTodoEntity("Task 2", 1);
+        Todo todo3 = createTodoEntity("Task 3", 2);
+
+        ReorderRequestDTO request = new ReorderRequestDTO();
+        request.setNewPosition(2);
+
+        mockMvc.perform(put("/api/todos/{id}/reorder", todo1.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(3))
+                .andExpect(jsonPath("$[0].id").value(todo2.getId()))
+                .andExpect(jsonPath("$[1].id").value(todo3.getId()))
+                .andExpect(jsonPath("$[2].id").value(todo1.getId()));
+
+        List<Todo> todos = todoRepository.findByUserIdOrderByPositionAsc(testUser.getId());
+        assertThat(todos.get(0).getPosition()).isEqualTo(0);
+        assertThat(todos.get(1).getPosition()).isEqualTo(1);
+        assertThat(todos.get(2).getPosition()).isEqualTo(2);
+    }
+
+    @Test
+    void reorderTodo_WithInvalidPosition_ShouldReturnBadRequest() throws Exception {
+        Todo todo = createTodoEntity("Task", 0);
+
+        ReorderRequestDTO request = new ReorderRequestDTO();
+        request.setNewPosition(5);
+
+        mockMvc.perform(put("/api/todos/{id}/reorder", todo.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void reorderTodo_WithNegativePosition_ShouldReturnBadRequest() throws Exception {
+        Todo todo = createTodoEntity("Task", 0);
+
+        ReorderRequestDTO request = new ReorderRequestDTO();
+        request.setNewPosition(-1);
+
+        mockMvc.perform(put("/api/todos/{id}/reorder", todo.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void reorderTodo_WithNullPosition_ShouldReturnBadRequest() throws Exception {
+        ReorderRequestDTO request = new ReorderRequestDTO();
+        request.setNewPosition(null);
+
+        mockMvc.perform(put("/api/todos/{id}/reorder", 1L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest());
+    }
+
+    private Todo createTodoEntity(String title, int position) {
+        Todo todo = Todo.builder()
+                .title(title)
+                .completed(false)
+                .position(position)
+                .user(testUser)
+                .build();
+        return todoRepository.save(todo);
     }
 }

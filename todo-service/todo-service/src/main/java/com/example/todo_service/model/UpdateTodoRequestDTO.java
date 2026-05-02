@@ -10,7 +10,6 @@ import lombok.Setter;
 public class UpdateTodoRequestDTO {
 
     @NotBlank
-    @NotBlank
     @Size(max = 255)
     private String title;
     private boolean completed;
